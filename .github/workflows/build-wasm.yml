@@ -1,0 +1,29 @@
+name: Build WASM
+
+on:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install WABT (wat2wasm)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wabt
+
+      - name: Compile index.wat → index.wasm
+        run: |
+          wat2wasm index.wat -o index.wasm
+
+      - name: Upload artifact (index.wasm)
+        uses: actions/upload-artifact@v4
+        with:
+          name: index-wasm
+          path: index.wasm
