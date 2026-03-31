@@ -19,11 +19,12 @@ jobs:
           cd emsdk
           ./emsdk install latest
           ./emsdk activate latest
-          echo "source $(pwd)/emsdk_env.sh" >> $GITHUB_ENV
 
       - name: Compile index.cpp → index.wasm
         run: |
-          source $GITHUB_ENV
+          cd emsdk
+          source ./emsdk_env.sh
+          cd ..
           emcc index.cpp \
             -O3 \
             -s EXPORTED_FUNCTIONS='["_derive_key","_ct_eq"]' \
