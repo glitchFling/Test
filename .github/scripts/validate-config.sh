@@ -17,7 +17,7 @@ fi
 
 echo "✔ $CONFIG exists and is non-empty"
 
-# --- 3. JSON value getter helper ---
+# --- 3. JSON getter ---
 get_json() {
   local key="$1"
   local value
@@ -36,7 +36,7 @@ get_json() {
   echo "$value"
 }
 
-# --- 4. Example: read config values ---
+# --- 4. Read config values ---
 STANDALONE=$(get_json '.emscripten.standaloneWasm')
 FORBID_EXIT=$(get_json '.emscripten.forbidExitRuntime')
 
