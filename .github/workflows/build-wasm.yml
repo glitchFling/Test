@@ -39,7 +39,18 @@ jobs:
           cd emsdk
           source ./emsdk_env.sh
           cd ..
-           emcc index.cpp \-O3 \ -fno-exceptions \-fno-rtti \-s DISABLE_EXCEPTION_CATCHING=1 \-s STANDALONE_WASM=1 \-nostdlib \-nostartfiles \-s DEFAULT_LIBRARY_FUNCS_TO_INCLUDE=[] \-s ERROR_ON_UNDEFINED_SYMBOLS=0 \-Wl,--no-entry \-o index.wasm
+          emcc index.cpp \
+            -O3 \
+            -fno-exceptions \
+            -fno-rtti \
+            -s DISABLE_EXCEPTION_CATCHING=1 \
+            -s STANDALONE_WASM=1 \
+            -nostdlib \
+            -nostartfiles \
+            -s DEFAULT_LIBRARY_FUNCS_TO_INCLUDE=[] \
+            -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
+            -Wl,--no-entry \
+            -o index.wasm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
