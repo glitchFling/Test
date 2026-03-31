@@ -13,19 +13,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate CI config
+      - name: Run config validator
         run: |
-          if [ ! -f "ci.config.json" ]; then
-            echo "❌ Error 404: ci.config.json not found"
-            exit 1
-          fi
-
-          if [ ! -s "ci.config.json" ]; then
-            echo "❌ Error 400: ci.config.json is empty"
-            exit 1
-          fi
-
-          echo "✔ ci.config.json found and non-empty"
+          bash .github/scripts/validate-config.sh
 
       - name: Install Emscripten
         run: |
