@@ -39,12 +39,11 @@ jobs:
           cd emsdk
           source ./emsdk_env.sh
           cd ..
-          emcc index.cpp \
+           emcc index.cpp \
             -O3 \
             -fno-exceptions \
             -fno-rtti \
             -s DISABLE_EXCEPTION_CATCHING=1 \
-            -s NO_EXIT_RUNTIME=1 \
             -s STANDALONE_WASM \
             -s EXPORTED_FUNCTIONS='["_derive_key","_ct_eq"]' \
             -o index.wasm
