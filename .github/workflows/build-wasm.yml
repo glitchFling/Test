@@ -13,6 +13,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check CI config
+        run: |
+          if [ ! -f "ci.config.json" ]; then
+            echo "❌ Error 404: ci.config.json not found"
+            exit 1
+          fi
+          echo "✔ Found ci.config.json"
+
       - name: Install Emscripten
         run: |
           git clone https://github.com/emscripten-core/emsdk.git
@@ -27,11 +35,13 @@ jobs:
           cd ..
           emcc index.cpp \
             -O3 \
+            -fno-exceptions \
+            -fno-rtti \
+            -s DISABLE_EXCEPTION_CATCHING=1 \
+            -s NO_EXIT_RUNTIME=1 \
+            -s STANDALONE_WASM \
             -s EXPORTED_FUNCTIONS='["_derive_key","_ct_eq"]' \
-            -s EXPORTED_RUNTIME_METHODS='["cwrap"]' \
-            -o index.wasm \
-            --no-entry \
-            -s STANDALONE_WASM
+            -o index.wasm
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
