@@ -1,14 +1,31 @@
-name: Build C++ → WASM
+name: Smart Build C++ → WASM
 
 on:
   push:
-    branches:
-      - "**"
+    branches: ["**"]
 
 jobs:
-  build-wasm:
+  # JOB 1: The Fast Validator (Node.js)
+  validate:
     runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Node Validator
+        id: check
+        run: |
+          TARGET=$(find . -name "ci_check.js" -print -quit)
+          # We run the script and capture its decision
+          # Note: The JS script below will set the 'status' output
+          node "$TARGET"
 
+  # JOB 2: The Heavy Compiler (Emscripten)
+  build-wasm:
+    needs: validate
+    # ONLY runs if the first job outputted 'ready'
+    if: needs.validate.outputs.should_run == 'ready'
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,30 +34,6 @@ jobs:
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
-
-      - name: Run config validator (No-JQ Version)
-        run: |
-          CONFIG="ci.config.json"
-          
-          # 1. Existence check
-          if [ ! -f "$CONFIG" ]; then echo "❌ $CONFIG missing"; exit 1; fi
-          echo "✔ $CONFIG exists"
-
-          # 2. Check for standaloneWasm = true using grep
-          # This replaces the failing jq logic
-          if grep -q '"standaloneWasm": true' "$CONFIG"; then
-            echo "• standaloneWasm is enabled"
-            
-            # 3. If enabled, check for forbidden flags in the code
-            if grep -q '"forbidExitRuntime": true' "$CONFIG"; then
-              echo "• forbidExitRuntime is enabled"
-              if grep -R --include="*.sh" -nE "EXIT_RUNTIME|--exit-runtime" .; then
-                echo "❌ Forbidden flag detected!"
-                exit 1
-              fi
-            fi
-          fi
-          echo "✔ Validation complete"
 
       - name: Compile index.cpp
         run: |
