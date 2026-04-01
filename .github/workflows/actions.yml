@@ -15,6 +15,5 @@ jobs:
           python-version: '3.10'
 
       - name: Run CI and Report Features
-        # No chmod needed, works on the whole repo
-        run: |
-          python -c "import glob, subprocess; [subprocess.run(['python', f], check=True) for f in glob.glob('**/ci_check.py', recursive=True)]"
+        # Calling the script directly ensures its print statements show up in logs
+        run: python ci_check.py
