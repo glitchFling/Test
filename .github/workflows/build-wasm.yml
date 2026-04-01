@@ -13,7 +13,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # This installs Emscripten WITHOUT using a Docker container
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
@@ -21,6 +20,10 @@ jobs:
 
       - name: Run config validator
         run: |
+          echo "--- DEBUG: Script Content ---"
+          cat .github/scripts/validate-config.sh
+          echo "--- END DEBUG ---"
+          
           chmod +x .github/scripts/validate-config.sh
           ./.github/scripts/validate-config.sh
 
