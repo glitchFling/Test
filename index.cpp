@@ -1,43 +1,50 @@
 // AccessGate.cpp
 //
-// Core deterministic logic extracted from AccessGate.js,
-// written as a pure C++/WASM module with no direct browser dependencies.
+// Hardened C++/WASM core for AccessGate:
+//   - Bounded work (DoS-safe)
+//   - Domain-separated 2auth generator
+//   - Safer deterministic fallback ID (no global default salt)
+//   - Input size caps
+//   - Clear error semantics
 //
-// JS is responsible for:
-//   - localStorage
-//   - fetch / network
-//   - navigator.*
-//   - redirects
-//   - wiring AuthWasm / OTPWasm
-//
-// This module provides:
-//   - ID validation
-//   - deterministic fallback ID
-//   - 2auth key generation
-//   - base64url encoding
-//
-// Compile with Emscripten and import sha256/sha512 from JS.
+// Exports (unchanged):
+//   int ag_is_valid_id(const char* ptr, int len);
+//   int ag_generate_2auth(const char* idPtr, int idLen, int length,
+//                         char* outBuf, int outBufLen);
+//   int ag_deterministic_id(..., char* outBuf, int outBufLen);
 
 #include <string>
 #include <vector>
 #include <stdint.h>
+#include <limits>
+#include <algorithm>
 
 // ---------- WASM crypto imports (provided by JS) ----------
 extern "C" {
-    // SHA-256: writes 32 bytes into out32
     __attribute__((import_module("env"), import_name("sha256")))
     void ag_sha256(const uint8_t* data, uint32_t len, uint8_t* out32);
 
-    // SHA-512: writes 64 bytes into out64
     __attribute__((import_module("env"), import_name("sha512")))
     void ag_sha512(const uint8_t* data, uint32_t len, uint8_t* out64);
 }
+
+// ---------- Limits & constants ----------
+
+static constexpr int MIN_ID_LEN        = 8;
+static constexpr int MAX_ID_LEN        = 128;
+
+static constexpr int MAX_INPUT_LEN     = 4096;   // per string input from JS
+static constexpr int MAX_2AUTH_LEN     = 4096;   // hard cap for 2auth output
+static constexpr int DEFAULT_2AUTH_LEN = 2048;
+
+static constexpr const char* TAG_2AUTH = "AccessGate-2auth-v1";
+static constexpr const char* TAG_FALLBACK = "AccessGate-fallback-id-v1";
 
 // ---------- Internal helpers ----------
 
 static inline bool isValidId(const std::string& s) {
     const size_t n = s.size();
-    return n >= 8 && n <= 128;
+    return n >= MIN_ID_LEN && n <= MAX_ID_LEN;
 }
 
 static inline std::string base64Url(const uint8_t* data, size_t len) {
@@ -61,16 +68,14 @@ static inline std::string base64Url(const uint8_t* data, size_t len) {
         out.push_back(i < len ? tbl[triple & 63] : '=');
     }
 
-    // strip '=' padding
+    // strip '=' padding so final alphabet is URL-safe
     while (!out.empty() && out.back() == '=') out.pop_back();
     return out;
 }
 
-static inline std::string sha256Hex(const std::string& text) {
+static inline std::string sha256Hex(const uint8_t* data, uint32_t len) {
     uint8_t out[32];
-    ag_sha256(reinterpret_cast<const uint8_t*>(text.data()),
-              static_cast<uint32_t>(text.size()),
-              out);
+    ag_sha256(data, len, out);
 
     static const char* hex = "0123456789abcdef";
     std::string s;
@@ -82,12 +87,30 @@ static inline std::string sha256Hex(const std::string& text) {
     return s;
 }
 
-// ---------- Deterministic fallback ID ----------
+static inline std::string sha256Hex(const std::string& text) {
+    return sha256Hex(reinterpret_cast<const uint8_t*>(text.data()),
+                     static_cast<uint32_t>(text.size()));
+}
+
+// Simple length-prefixed concatenation to avoid delimiter ambiguity.
+static inline void appendLenPrefixed(std::string& dst,
+                                     const char* tag,
+                                     const std::string& s) {
+    dst.append(tag);
+    dst.push_back(':');
+    dst.append(std::to_string(s.size()));
+    dst.push_back(':');
+    dst.append(s);
+}
+
+// ---------- Deterministic fallback ID (hardened) ----------
 //
-// Mirrors JS seed:
-//   salt | userAgent | language | platform | hwConcurrency | maxTouchPoints | timezoneOffset
+// Requirements:
+//   - Deterministic per (salt, browser fingerprint)
+//   - No global default salt
+//   - Structured seed to avoid ambiguity
 //
-// JS must pass those strings in.
+// JS MUST pass a non-empty, per-origin salt.
 
 static inline std::string deterministicFallbackIdInternal(
     const std::string& salt,
@@ -98,70 +121,112 @@ static inline std::string deterministicFallbackIdInternal(
     const std::string& maxTouchPoints,
     const std::string& timezoneOffset
 ) {
-    std::string seed =
-        salt + "|" +
-        userAgent + "|" +
-        language + "|" +
-        platform + "|" +
-        hwConcurrency + "|" +
-        maxTouchPoints + "|" +
-        timezoneOffset;
+    // Require non-empty salt; caller enforces this before calling.
+    std::string seed;
+    seed.reserve(256);
+
+    seed.append(TAG_FALLBACK);
+    seed.push_back('|');
+
+    appendLenPrefixed(seed, "salt",        salt);
+    appendLenPrefixed(seed, "ua",          userAgent);
+    appendLenPrefixed(seed, "lang",        language);
+    appendLenPrefixed(seed, "platform",    platform);
+    appendLenPrefixed(seed, "hw",          hwConcurrency);
+    appendLenPrefixed(seed, "touch",       maxTouchPoints);
+    appendLenPrefixed(seed, "tz",          timezoneOffset);
 
     std::string digest = sha256Hex(seed);
-    // JS: "det_" + digest.slice(0, 48)
+    // "det_" + first 48 hex chars (192 bits)
     return std::string("det_") + digest.substr(0, 48);
 }
 
-// ---------- 2auth generator ----------
+// ---------- 2auth generator (hardened) ----------
 //
-// JS logic:
-//   while (parts.join("").length < target) {
-//     material = `${id}|${counter}`;
-//     hash = SHA-512(material);
-//     parts.push(base64Url(hash));
-//   }
-//   return joined.slice(0, target);
+// Design:
+//   key_stream = concat_c base64Url(SHA-512(TAG_2AUTH || len(id) || id || counter))
+//   - Domain-separated with TAG_2AUTH
+//   - Bounded output length
+//   - Bounded input length
+//   - Counter uses uint64_t to avoid overflow
 
-static inline std::string generate2authInternal(const std::string& id, int length) {
+static inline std::string generate2authInternal(const std::string& id,
+                                                int requestedLength) {
     if (!isValidId(id)) {
-        // JS throws; here we return empty and let JS decide what to do.
         return std::string();
     }
 
-    const int target = (length > 0 ? length : 2048);
+    // Clamp target length
+    int targetInt = (requestedLength > 0 ? requestedLength : DEFAULT_2AUTH_LEN);
+    if (targetInt > MAX_2AUTH_LEN) {
+        targetInt = MAX_2AUTH_LEN;
+    }
+    if (targetInt <= 0) {
+        return std::string();
+    }
+
+    const size_t target = static_cast<size_t>(targetInt);
 
     std::string out;
     out.reserve(target);
 
-    int counter = 0;
     uint8_t buf[64];
+    uint64_t counter = 0;
 
-    while (static_cast<int>(out.size()) < target) {
-        std::string material = id + "|" + std::to_string(counter);
+    while (out.size() < target) {
+        // Material: TAG_2AUTH || "|" || len(id) || ":" || id || "|" || counter
+        std::string material;
+        material.reserve(id.size() + 64);
+        material.append(TAG_2AUTH);
+        material.push_back('|');
+        material.append(std::to_string(id.size()));
+        material.push_back(':');
+        material.append(id);
+        material.push_back('|');
+        material.append(std::to_string(counter));
 
         ag_sha512(reinterpret_cast<const uint8_t*>(material.data()),
                   static_cast<uint32_t>(material.size()),
                   buf);
 
-        out += base64Url(buf, 64);
-        counter++;
+        std::string chunk = base64Url(buf, sizeof(buf));
+        if (chunk.empty()) {
+            return std::string(); // should not happen, but fail closed
+        }
+
+        // Append but don't exceed target
+        const size_t remaining = target - out.size();
+        if (chunk.size() <= remaining) {
+            out += chunk;
+        } else {
+            out.append(chunk.data(), remaining);
+        }
+
+        // Counter increment with saturation to avoid UB
+        if (counter == std::numeric_limits<uint64_t>::max()) {
+            break; // stop rather than wrap
+        }
+        ++counter;
     }
 
-    out.resize(target);
+    if (out.size() > target) {
+        out.resize(target);
+    }
     return out;
 }
 
 // ---------- C ABI exports for JS glue ----------
 //
-// These are simple, stable exports you can bind to from JS.
-// All strings are passed as (ptr, len) and returned via a
-// linear-memory buffer pattern (caller owns memory).
+// All functions:
+//   - Enforce input length caps
+//   - Return 0 on error
+//   - Never write partial outputs on failure
 
 extern "C" {
 
 // Simple validity check: returns 1 if valid, 0 otherwise.
 int ag_is_valid_id(const char* ptr, int len) {
-    if (!ptr || len <= 0) return 0;
+    if (!ptr || len <= 0 || len > MAX_INPUT_LEN) return 0;
     std::string s(ptr, ptr + len);
     return isValidId(s) ? 1 : 0;
 }
@@ -170,13 +235,19 @@ int ag_is_valid_id(const char* ptr, int len) {
 // If id invalid or error, returns 0.
 int ag_generate_2auth(const char* idPtr, int idLen, int length,
                       char* outBuf, int outBufLen) {
-    if (!idPtr || idLen <= 0 || !outBuf || outBufLen <= 0) return 0;
+    if (!idPtr || !outBuf) return 0;
+    if (idLen <= 0 || idLen > MAX_INPUT_LEN) return 0;
+    if (outBufLen <= 0) return 0;
 
     std::string id(idPtr, idPtr + idLen);
     std::string key = generate2authInternal(id, length);
 
     if (key.empty()) return 0;
-    if (static_cast<int>(key.size()) > outBufLen) return 0;
+
+    // Enforce output buffer cap
+    if (key.size() > static_cast<size_t>(outBufLen)) {
+        return 0;
+    }
 
     for (size_t i = 0; i < key.size(); ++i) {
         outBuf[i] = key[i];
@@ -185,7 +256,7 @@ int ag_generate_2auth(const char* idPtr, int idLen, int length,
 }
 
 // Deterministic fallback ID. Returns length of written bytes into outBuf.
-// JS passes browser-derived strings.
+// JS passes browser-derived strings and a NON-EMPTY, per-origin salt.
 int ag_deterministic_id(
     const char* saltPtr, int saltLen,
     const char* uaPtr, int uaLen,
@@ -196,16 +267,27 @@ int ag_deterministic_id(
     const char* tzPtr, int tzLen,
     char* outBuf, int outBufLen
 ) {
-    if (!saltPtr || saltLen < 0 ||
-        !uaPtr || uaLen < 0 ||
-        !langPtr || langLen < 0 ||
-        !platformPtr || platformLen < 0 ||
-        !hwPtr || hwLen < 0 ||
-        !touchPtr || touchLen < 0 ||
-        !tzPtr || tzLen < 0 ||
-        !outBuf || outBufLen <= 0) {
+    if (!saltPtr || !uaPtr || !langPtr || !platformPtr ||
+        !hwPtr || !touchPtr || !tzPtr || !outBuf) {
         return 0;
     }
+
+    // Enforce non-negative and bounded lengths
+    auto validLen = [](int len) {
+        return len >= 0 && len <= MAX_INPUT_LEN;
+    };
+
+    if (!validLen(saltLen)     ||
+        !validLen(uaLen)       ||
+        !validLen(langLen)     ||
+        !validLen(platformLen) ||
+        !validLen(hwLen)       ||
+        !validLen(touchLen)    ||
+        !validLen(tzLen)) {
+        return 0;
+    }
+
+    if (outBufLen <= 0) return 0;
 
     std::string salt(saltPtr, saltPtr + saltLen);
     std::string ua(uaPtr, uaPtr + uaLen);
@@ -215,15 +297,17 @@ int ag_deterministic_id(
     std::string touch(touchPtr, touchPtr + touchLen);
     std::string tz(tzPtr, tzPtr + tzLen);
 
+    // Hardened: require non-empty salt; no global default.
     if (salt.empty()) {
-        salt = "my-radio-io.v1";
+        return 0;
     }
 
     std::string id = deterministicFallbackIdInternal(
         salt, ua, lang, platform, hw, touch, tz
     );
 
-    if (static_cast<int>(id.size()) > outBufLen) return 0;
+    if (id.empty()) return 0;
+    if (id.size() > static_cast<size_t>(outBufLen)) return 0;
 
     for (size_t i = 0; i < id.size(); ++i) {
         outBuf[i] = id[i];
