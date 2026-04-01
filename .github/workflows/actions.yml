@@ -14,6 +14,14 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Run CI and Report Features
-        # Calling the script directly ensures its print statements show up in logs
-        run: python ci_check.py
+      - name: Find and Run CI
+        run: |
+          # Use 'find' to locate the script and 'python' to run it (No chmod!)
+          SCRIPT_PATH=$(find . -name "ci_check.py" -print -quit)
+          if [ -z "$SCRIPT_PATH" ]; then
+            echo "❌ Error: Could not find ci_check.py anywhere in the repo!"
+            exit 1
+          fi
+          echo "Found script at: $SCRIPT_PATH"
+          python "$SCRIPT_PATH"
+
