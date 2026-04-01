@@ -1,29 +1,26 @@
-name: Smart Build C++ → WASM
+name: Build C++ → WASM
 
 on:
   push:
     branches: ["**"]
 
 jobs:
-  # JOB 1: The Fast Validator (Node.js)
+  # JOB 1: The Fast Validator
   validate:
     runs-on: ubuntu-latest
     outputs:
-      should_run: ${{ steps.check.outputs.status }}
+      should_run: ${{ steps.check_step.outputs.status }}
     steps:
       - uses: actions/checkout@v4
       - name: Run Node Validator
-        id: check
+        id: check_step
         run: |
           TARGET=$(find . -name "ci_check.js" -print -quit)
-          # We run the script and capture its decision
-          # Note: The JS script below will set the 'status' output
           node "$TARGET"
 
-  # JOB 2: The Heavy Compiler (Emscripten)
+  # JOB 2: Your Actual Build CI (Depends on validate)
   build-wasm:
     needs: validate
-    # ONLY runs if the first job outputted 'ready'
     if: needs.validate.outputs.should_run == 'ready'
     runs-on: ubuntu-latest
     steps:
@@ -36,6 +33,7 @@ jobs:
           version: latest
 
       - name: Compile index.cpp
+        # This is your exact C++ build command
         run: |
           emcc index.cpp \
             -O3 \
