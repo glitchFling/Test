@@ -8,6 +8,8 @@ on:
 jobs:
   build-wasm:
     runs-on: ubuntu-latest
+    # This environment has emcc pre-installed so you don't have to setup git/sdk
+    container: emscripten/emsdk:latest 
 
     steps:
       - name: Checkout
@@ -15,20 +17,11 @@ jobs:
 
       - name: Run config validator
         run: |
+          chmod +x .github/scripts/validate-config.sh
           bash .github/scripts/validate-config.sh
-
-      - name: Install Emscripten
-        run: |
-          git clone https://github.com/emscripten-core/emsdk.git
-          cd emsdk
-          ./emsdk install latest
-          ./emsdk activate latest
 
       - name: Compile index.cpp → index.wasm
         run: |
-          cd emsdk
-          source ./emsdk_env.sh
-          cd ..
           emcc index.cpp \
             -O3 \
             -fno-exceptions \
@@ -37,7 +30,6 @@ jobs:
             -s STANDALONE_WASM=1 \
             -nostdlib \
             -nostartfiles \
-            -s DEFAULT_LIBRARY_FUNCS_TO_INCLUDE=[] \
             -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
             -Wl,--no-entry \
             -o index.wasm
