@@ -18,13 +18,29 @@ jobs:
         with:
           version: latest
 
-      - name: Install Dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Run config validator
+      - name: Run config validator (No-JQ Version)
         run: |
-          chmod +x .github/scripts/validate-config.sh
-          ./.github/scripts/validate-config.sh
+          CONFIG="ci.config.json"
+          
+          # 1. Existence check
+          if [ ! -f "$CONFIG" ]; then echo "❌ $CONFIG missing"; exit 1; fi
+          echo "✔ $CONFIG exists"
+
+          # 2. Check for standaloneWasm = true using grep
+          # This replaces the failing jq logic
+          if grep -q '"standaloneWasm": true' "$CONFIG"; then
+            echo "• standaloneWasm is enabled"
+            
+            # 3. If enabled, check for forbidden flags in the code
+            if grep -q '"forbidExitRuntime": true' "$CONFIG"; then
+              echo "• forbidExitRuntime is enabled"
+              if grep -R --include="*.sh" -nE "EXIT_RUNTIME|--exit-runtime" .; then
+                echo "❌ Forbidden flag detected!"
+                exit 1
+              fi
+            fi
+          fi
+          echo "✔ Validation complete"
 
       - name: Compile index.cpp
         run: |
