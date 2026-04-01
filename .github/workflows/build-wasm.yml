@@ -18,12 +18,11 @@ jobs:
         with:
           version: latest
 
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
       - name: Run config validator
         run: |
-          echo "--- DEBUG: Script Content ---"
-          cat .github/scripts/validate-config.sh
-          echo "--- END DEBUG ---"
-          
           chmod +x .github/scripts/validate-config.sh
           ./.github/scripts/validate-config.sh
 
