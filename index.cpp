@@ -53,16 +53,17 @@ static inline std::string base64Url(const uint8_t* data, size_t len) {
 
     size_t i = 0;
     while (i < len) {
-        uint32_t a = i < len ? data[i++] : 0;
-        uint32_t b = i < len ? data[i++] : 0;
-        uint32_t c = i < len ? data[i++] : 0;
+        const size_t rem = len - i;
+        uint32_t a = data[i++];
+        uint32_t b = rem > 1 ? data[i++] : 0;
+        uint32_t c = rem > 2 ? data[i++] : 0;
 
         uint32_t triple = (a << 16) | (b << 8) | c;
 
         out.push_back(tbl[(triple >> 18) & 63]);
         out.push_back(tbl[(triple >> 12) & 63]);
-        out.push_back(i - 1 < len ? tbl[(triple >> 6) & 63] : '=');
-        out.push_back(i < len ? tbl[triple & 63] : '=');
+        out.push_back(rem > 1 ? tbl[(triple >> 6) & 63] : '=');
+        out.push_back(rem > 2 ? tbl[triple & 63] : '=');
     }
 
     while (!out.empty() && out.back() == '=') out.pop_back();
