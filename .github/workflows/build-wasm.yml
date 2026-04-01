@@ -8,19 +8,23 @@ on:
 jobs:
   build-wasm:
     runs-on: ubuntu-latest
-    # This environment has emcc pre-installed so you don't have to setup git/sdk
-    container: emscripten/emsdk:latest 
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # This installs Emscripten WITHOUT using a Docker container
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
       - name: Run config validator
         run: |
           chmod +x .github/scripts/validate-config.sh
-          bash .github/scripts/validate-config.sh
+          ./.github/scripts/validate-config.sh
 
-      - name: Compile index.cpp → index.wasm
+      - name: Compile index.cpp
         run: |
           emcc index.cpp \
             -O3 \
