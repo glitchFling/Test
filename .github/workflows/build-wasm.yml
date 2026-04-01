@@ -5,7 +5,6 @@ on:
     branches: ["**"]
 
 jobs:
-  # JOB 1: The Fast Validator
   validate:
     runs-on: ubuntu-latest
     outputs:
@@ -18,7 +17,6 @@ jobs:
           TARGET=$(find . -name "ci_check.js" -print -quit)
           node "$TARGET"
 
-  # JOB 2: Your Actual Build CI (Depends on validate)
   build-wasm:
     needs: validate
     if: needs.validate.outputs.should_run == 'ready'
@@ -33,18 +31,15 @@ jobs:
           version: latest
 
       - name: Compile index.cpp
-        # This is your exact C++ build command
         run: |
           emcc index.cpp \
             -O3 \
             -fno-exceptions \
             -fno-rtti \
             -s DISABLE_EXCEPTION_CATCHING=1 \
-            -s STANDALONE_WASM=1 \
-            -nostdlib \
-            -nostartfiles \
-            -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
-            -Wl,--no-entry \
+            -s STANDALONE_WASM=0 \
+            -s EXPORTED_FUNCTIONS=_malloc,_free,_ag_generate_2auth,_ag_deterministic_id,_ag_is_valid_id \
+            -s EXPORTED_RUNTIME_METHODS=ccall,cwrap \
             -o index.wasm
 
       - name: Upload artifact
