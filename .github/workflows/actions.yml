@@ -14,14 +14,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Find and Run CI
+      - name: Locate and Execute CI
         run: |
-          # Use 'find' to locate the script and 'python' to run it (No chmod!)
-          SCRIPT_PATH=$(find . -name "ci_check.py" -print -quit)
-          if [ -z "$SCRIPT_PATH" ]; then
-            echo "❌ Error: Could not find ci_check.py anywhere in the repo!"
+          # Find the script path automatically
+          TARGET=$(find . -name "ci_check.py" -print -quit)
+          if [ -z "$TARGET" ]; then
+            echo "❌ Error: ci_check.py not found!"
             exit 1
           fi
-          echo "Found script at: $SCRIPT_PATH"
-          python "$SCRIPT_PATH"
-
+          # Run via interpreter to bypass chmod
+          python "$TARGET"
