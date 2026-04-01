@@ -10,4 +10,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Node CI
-        run: node ci_check.js
+        run: |
+          # Find the actual path to the file
+          TARGET=$(find . -name "ci_check.js" -print -quit)
+          
+          if [ -z "$TARGET" ]; then
+            echo "❌ Error: ci_check.js not found anywhere in the repo!"
+            exit 1
+          fi
+          
+          echo "Found script at: $TARGET"
+          # Run it via node (Chmod-free!)
+          node "$TARGET"
