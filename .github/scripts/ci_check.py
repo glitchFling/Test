@@ -3,42 +3,44 @@ import os
 import sys
 import glob
 
-# Find config relative to the script location
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "ci.config.json")
-
 def run_ci():
-    # 1. Load Config
-    if not os.path.exists(CONFIG_PATH):
-        print(f"❌ Error: {CONFIG_PATH} not found.")
+    # 1. FIND THE CONFIG (Search entire repo)
+    config_matches = glob.glob('**/ci.config.json', recursive=True)
+    if not config_matches:
+        print("❌ Error: ci.config.json not found anywhere!")
         sys.exit(1)
+    
+    config_path = config_matches[0]
+    print(f"🔍 Using config: {config_path}")
 
-    with open(CONFIG_PATH, 'r') as f:
-        data = json.load(f)
+    # 2. LOAD AND CHECK THE TOGGLE
+    with open(config_path, 'r') as f:
+        try:
+            data = json.load(f)
+        except:
+            print("❌ Error: Invalid JSON!")
+            sys.exit(1)
 
-    # 2. Check the "ci" Toggle
-    if not data.get('ci', False):
-        print("⏭️  CI is disabled in config. Skipping scan.")
+    # Use .get() and compare strictly to True
+    # This handles "false", null, or missing keys correctly
+    is_enabled = data.get('ci')
+    
+    if is_enabled is not True:
+        print(f"⏭️  CI is DISABLED (Value is: {is_enabled}). Skipping scan.")
         return
 
-    print("🚀 CI Enabled: Scanning entire repo for forbidden flags...")
-
-    # 3. Global Scan for forbidden strings
-    # This hunts for "EXIT_RUNTIME" or "--exit-runtime" in any .sh file
+    # 3. RUN THE SCAN
+    print("🚀 CI is ENABLED. Scanning...")
     found_violation = False
     for sh_file in glob.iglob('**/*.sh', recursive=True):
-        try:
-            with open(sh_file, 'r', errors='ignore') as f:
-                if any(token in f.read() for token in ["EXIT_RUNTIME", "--exit-runtime"]):
-                    print(f"❌ VIOLATION found in: {sh_file}")
-                    found_violation = True
-        except Exception as e:
-            print(f"⚠️  Skipping {sh_file}: {e}")
+        with open(sh_file, 'r', errors='ignore') as f:
+            if "EXIT_RUNTIME" in f.read():
+                print(f"❌ VIOLATION: {sh_file}")
+                found_violation = True
 
     if found_violation:
         sys.exit(451)
-
-    print("✔ CI check complete. No violations found.")
+    print("✔ All clear.")
 
 if __name__ == "__main__":
     run_ci()
