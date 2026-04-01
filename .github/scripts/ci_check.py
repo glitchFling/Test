@@ -3,56 +3,42 @@ import os
 import sys
 import glob
 
-# Get script location to find the config file
+# Find config relative to the script location
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG = os.path.join(BASE_DIR, "ci.config.json")
+CONFIG_PATH = os.path.join(BASE_DIR, "ci.config.json")
 
-# 1. Load and Verify Config
-if not os.path.isfile(CONFIG):
-    print(f"❌ Error: {CONFIG} not found")
-    sys.exit(404)
+def run_ci():
+    # 1. Load Config
+    if not os.path.exists(CONFIG_PATH):
+        print(f"❌ Error: {CONFIG_PATH} not found.")
+        sys.exit(1)
 
-try:
-    with open(CONFIG, 'r') as f:
+    with open(CONFIG_PATH, 'r') as f:
         data = json.load(f)
-except json.JSONDecodeError:
-    print(f"❌ Error: Invalid JSON in {CONFIG}")
-    sys.exit(500)
 
-# Helper to get nested JSON values
-def get_val(path):
-    keys = path.split('.')
-    val = data
-    try:
-        for k in keys:
-            val = val[k]
-        return val
-    except: return None
+    # 2. Check the "ci" Toggle
+    if not data.get('ci', False):
+        print("⏭️  CI is disabled in config. Skipping scan.")
+        return
 
-# 2. Extract Features
-standalone = get_val('emscripten.standaloneWasm')
-forbid_exit = get_val('emscripten.forbidExitRuntime')
+    print("🚀 CI Enabled: Scanning entire repo for forbidden flags...")
 
-# 3. Print "Enabled Features" Report
-print("\n" + "="*30)
-print("  ENABLED CI FEATURES")
-print("="*30)
-print(f"• Standalone WASM:    {'✅ ENABLED' if standalone else '❌ DISABLED'}")
-print(f"• Forbid Exit Runtime: {'✅ ENABLED' if forbid_exit else '❌ DISABLED'}")
-print("="*30 + "\n")
+    # 3. Global Scan for forbidden strings
+    # This hunts for "EXIT_RUNTIME" or "--exit-runtime" in any .sh file
+    found_violation = False
+    for sh_file in glob.iglob('**/*.sh', recursive=True):
+        try:
+            with open(sh_file, 'r', errors='ignore') as f:
+                if any(token in f.read() for token in ["EXIT_RUNTIME", "--exit-runtime"]):
+                    print(f"❌ VIOLATION found in: {sh_file}")
+                    found_violation = True
+        except Exception as e:
+            print(f"⚠️  Skipping {sh_file}: {e}")
 
-# 4. Enforce Rules
-if standalone and forbid_exit:
-    found_illegal = False
-    # Scan entire repo for forbidden flags in .sh files
-    for sh_file in glob.iglob(os.path.join(os.getcwd(), '**/*.sh'), recursive=True):
-        with open(sh_file, 'r', errors='ignore') as f:
-            content = f.read()
-            if "EXIT_RUNTIME" in content or "--exit-runtime" in content:
-                print(f"❌ VIOLATION: Forbidden flag found in {sh_file}")
-                found_illegal = True
-    
-    if found_illegal:
+    if found_violation:
         sys.exit(451)
 
-print("✔ All checks passed.")
+    print("✔ CI check complete. No violations found.")
+
+if __name__ == "__main__":
+    run_ci()
