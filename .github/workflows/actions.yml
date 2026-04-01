@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Find and Run All CI Checks
-        # This one-liner finds all ci_check.py files and runs them
+      - name: Run CI and Report Features
+        # No chmod needed, works on the whole repo
         run: |
-          python -c "import glob, subprocess, sys; [subprocess.run(['python', f], check=True) for f in glob.glob('**/ci_check.py', recursive=True)]"
+          python -c "import glob, subprocess; [subprocess.run(['python', f], check=True) for f in glob.glob('**/ci_check.py', recursive=True)]"
