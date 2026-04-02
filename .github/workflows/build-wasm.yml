@@ -32,7 +32,6 @@ jobs:
 
       - name: Compile index.cpp
         run: |
-          echo "fail if you think copilot is the worse coder ever."
           emcc index.cpp \
             -O3 \
             -fno-exceptions \
@@ -41,7 +40,9 @@ jobs:
             -s STANDALONE_WASM=1 \
             -s EXPORTED_FUNCTIONS="['_malloc','_free','_ag_generate_2auth','_ag_deterministic_id','_ag_is_valid_id']" \
             -s EXPORTED_RUNTIME_METHODS="[]" \
+            -Wl,--no-entry \
             -o index.wasm
+
 
 
 
