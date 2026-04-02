@@ -1,4 +1,4 @@
-// AccessGate.cpp
+// AccessGate.cpp (v2, memory-hard core, same C ABI)
 //
 // Hardened C++/WASM core for AccessGate in Emscripten mode (PATH A).
 // Exports (C ABI):
@@ -15,6 +15,8 @@
 #include <string>
 #include <stdint.h>
 #include <limits>
+#include <vector>
+#include <string.h>
 
 // ---------- WASM crypto imports (provided by JS) ----------
 extern "C" {
@@ -34,8 +36,19 @@ static constexpr int MAX_INPUT_LEN     = 4096;   // per string input from JS
 static constexpr int MAX_2AUTH_LEN     = 4096;   // hard cap for 2auth output
 static constexpr int DEFAULT_2AUTH_LEN = 2048;
 
-static constexpr const char* TAG_2AUTH    = "AccessGate-2auth-v1";
-static constexpr const char* TAG_FALLBACK = "AccessGate-fallback-id-v1";
+// v2 tags (v1 tags preserved here for reference only)
+// static constexpr const char* TAG_2AUTH_V1    = "AccessGate-2auth-v1";
+// static constexpr const char* TAG_FALLBACK_V1 = "AccessGate-fallback-id-v1";
+
+static constexpr const char* TAG_2AUTH_V2    = "AccessGate-2auth-v2";
+static constexpr const char* TAG_FALLBACK_V2 = "AccessGate-fallback-id-v2";
+
+// Memory-hard parameters (tunable)
+static constexpr size_t MH_2AUTH_BLOCKS   = 4096; // 4096 * 64 = 256 KiB
+static constexpr size_t MH_2AUTH_BLKSIZE  = 64;
+
+static constexpr size_t MH_ID_BLOCKS      = 2048; // 2048 * 32 = 64 KiB
+static constexpr size_t MH_ID_BLKSIZE     = 32;
 
 // ---------- Internal helpers ----------
 
@@ -99,7 +112,65 @@ static inline void appendLenPrefixed(std::string& dst,
     dst.append(s);
 }
 
-// ---------- Deterministic fallback ID ----------
+// ---------- Memory-hard cores ----------
+
+// 64-byte memory-hard expansion (for 2auth blocks)
+static inline void mh_expand_64(const uint8_t* seed64, uint8_t* out64) {
+    // Buffer: MH_2AUTH_BLOCKS * 64 bytes
+    std::vector<uint8_t> buf(MH_2AUTH_BLOCKS * MH_2AUTH_BLKSIZE);
+
+    // Block 0 = seed
+    memcpy(&buf[0], seed64, MH_2AUTH_BLKSIZE);
+
+    for (size_t i = 1; i < MH_2AUTH_BLOCKS; ++i) {
+        uint8_t* prev = &buf[(i - 1) * MH_2AUTH_BLKSIZE];
+
+        // Simple data-dependent index
+        size_t refIndex = (static_cast<size_t>(prev[0]) ^
+                           static_cast<size_t>(prev[17])) % i;
+        uint8_t* ref = &buf[refIndex * MH_2AUTH_BLKSIZE];
+
+        uint8_t tmp[MH_2AUTH_BLKSIZE];
+        for (size_t j = 0; j < MH_2AUTH_BLKSIZE; ++j) {
+            tmp[j] = static_cast<uint8_t>(prev[j] ^ ref[j]);
+        }
+
+        ag_sha512(tmp, MH_2AUTH_BLKSIZE, &buf[i * MH_2AUTH_BLKSIZE]);
+    }
+
+    // Final hash of last block
+    ag_sha512(&buf[(MH_2AUTH_BLOCKS - 1) * MH_2AUTH_BLKSIZE],
+              MH_2AUTH_BLKSIZE,
+              out64);
+}
+
+// 32-byte memory-hard expansion (for deterministic ID)
+static inline void mh_expand_32(const uint8_t* seed32, uint8_t* out32) {
+    std::vector<uint8_t> buf(MH_ID_BLOCKS * MH_ID_BLKSIZE);
+
+    memcpy(&buf[0], seed32, MH_ID_BLKSIZE);
+
+    for (size_t i = 1; i < MH_ID_BLOCKS; ++i) {
+        uint8_t* prev = &buf[(i - 1) * MH_ID_BLKSIZE];
+
+        size_t refIndex = (static_cast<size_t>(prev[0]) ^
+                           static_cast<size_t>(prev[13])) % i;
+        uint8_t* ref = &buf[refIndex * MH_ID_BLKSIZE];
+
+        uint8_t tmp[MH_ID_BLKSIZE];
+        for (size_t j = 0; j < MH_ID_BLKSIZE; ++j) {
+            tmp[j] = static_cast<uint8_t>(prev[j] ^ ref[j]);
+        }
+
+        ag_sha256(tmp, MH_ID_BLKSIZE, &buf[i * MH_ID_BLKSIZE]);
+    }
+
+    ag_sha256(&buf[(MH_ID_BLOCKS - 1) * MH_ID_BLKSIZE],
+              MH_ID_BLKSIZE,
+              out32);
+}
+
+// ---------- Deterministic fallback ID (v2, memory-hard) ----------
 
 static inline std::string deterministicFallbackIdInternal(
     const std::string& salt,
@@ -113,8 +184,10 @@ static inline std::string deterministicFallbackIdInternal(
     std::string seed;
     seed.reserve(256);
 
-    seed.append(TAG_FALLBACK);
+    // v2 tag + simple mh param marker
+    seed.append(TAG_FALLBACK_V2);
     seed.push_back('|');
+    seed.append("mh:m2|");
 
     appendLenPrefixed(seed, "salt",   salt);
     appendLenPrefixed(seed, "ua",     userAgent);
@@ -124,11 +197,30 @@ static inline std::string deterministicFallbackIdInternal(
     appendLenPrefixed(seed, "touch",  maxTouchPoints);
     appendLenPrefixed(seed, "tz",     timezoneOffset);
 
-    std::string digest = sha256Hex(seed);
+    // Initial 32-byte seed
+    uint8_t seed32[32];
+    ag_sha256(reinterpret_cast<const uint8_t*>(seed.data()),
+              static_cast<uint32_t>(seed.size()),
+              seed32);
+
+    // Memory-hard expansion
+    uint8_t final32[32];
+    mh_expand_32(seed32, final32);
+
+    // Hex-encode and prefix
+    static const char* hex = "0123456789abcdef";
+    std::string digest;
+    digest.reserve(64);
+    for (int i = 0; i < 32; ++i) {
+        digest.push_back(hex[final32[i] >> 4]);
+        digest.push_back(hex[final32[i] & 0xF]);
+    }
+
+    // Keep same external shape: "det_" + 48 hex chars
     return std::string("det_") + digest.substr(0, 48);
 }
 
-// ---------- 2auth generator ----------
+// ---------- 2auth generator (v2, memory-hard) ----------
 
 static inline std::string generate2authInternal(const std::string& id,
                                                 int requestedLength) {
@@ -155,18 +247,26 @@ static inline std::string generate2authInternal(const std::string& id,
     while (out.size() < target) {
         std::string material;
         material.reserve(id.size() + 64);
-        material.append(TAG_2AUTH);
+        material.append(TAG_2AUTH_V2);
         material.push_back('|');
         material.append(std::to_string(id.size()));
         material.push_back(':');
         material.append(id);
         material.push_back('|');
         material.append(std::to_string(counter));
+        material.push_back('|');
+        material.append("mh:m2");
 
+        // Initial SHA-512 of material
+        uint8_t seed64[64];
         ag_sha512(reinterpret_cast<const uint8_t*>(material.data()),
                   static_cast<uint32_t>(material.size()),
-                  buf);
+                  seed64);
 
+        // Memory-hard expansion
+        mh_expand_64(seed64, buf);
+
+        // Base64URL encode final block
         std::string chunk = base64Url(buf, sizeof(buf));
         if (chunk.empty()) {
             return std::string();
