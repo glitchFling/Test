@@ -1,6 +1,6 @@
-// AccessGate.cpp (v2, memory-hard core, same C ABI)
+// AccessGate.cpp — v3 (password-KDF aware, memory-hard, same C ABI)
 //
-// Hardened C++/WASM core for AccessGate in Emscripten mode (PATH A).
+// Hardened C++/WASM core for AccessGate in Emscripten mode.
 // Exports (C ABI):
 //   int ag_is_valid_id(const char* ptr, int len);
 //   int ag_generate_2auth(const char* idPtr, int idLen, int length,
@@ -11,6 +11,13 @@
 //   _ag_is_valid_id
 //   _ag_generate_2auth
 //   _ag_deterministic_id
+//
+// v3 assumptions:
+// - Weak passwords (if any) are already passed through a memory-hard KDF
+//   (e.g., Argon2id) OUTSIDE this module.
+// - This core treats its inputs as high-entropy secrets and adds its own
+//   memory-hard mixing + domain separation.
+// - C ABI is unchanged from v1/v2.
 
 #include <string>
 #include <stdint.h>
@@ -36,12 +43,17 @@ static constexpr int MAX_INPUT_LEN     = 4096;   // per string input from JS
 static constexpr int MAX_2AUTH_LEN     = 4096;   // hard cap for 2auth output
 static constexpr int DEFAULT_2AUTH_LEN = 2048;
 
-// v2 tags (v1 tags preserved here for reference only)
+// v3 tags (v1/v2 tags kept only for reference)
 // static constexpr const char* TAG_2AUTH_V1    = "AccessGate-2auth-v1";
 // static constexpr const char* TAG_FALLBACK_V1 = "AccessGate-fallback-id-v1";
+// static constexpr const char* TAG_2AUTH_V2    = "AccessGate-2auth-v2";
+// static constexpr const char* TAG_FALLBACK_V2 = "AccessGate-fallback-id-v2";
 
-static constexpr const char* TAG_2AUTH_V2    = "AccessGate-2auth-v2";
-static constexpr const char* TAG_FALLBACK_V2 = "AccessGate-fallback-id-v2";
+static constexpr const char* TAG_2AUTH_V3    = "AccessGate-2auth-v3";
+static constexpr const char* TAG_FALLBACK_V3 = "AccessGate-fallback-id-v3";
+
+// v3: encode that upstream password KDF is in play (informational, domain sep)
+static constexpr const char* PLAN_PWD_KDF    = "AG-PWD-v1:mem64m-time2-par1";
 
 // Memory-hard parameters (tunable)
 static constexpr size_t MH_2AUTH_BLOCKS   = 4096; // 4096 * 64 = 256 KiB
@@ -170,7 +182,7 @@ static inline void mh_expand_32(const uint8_t* seed32, uint8_t* out32) {
               out32);
 }
 
-// ---------- Deterministic fallback ID (v2, memory-hard) ----------
+// ---------- Deterministic fallback ID (v3, memory-hard, KDF-aware) ----------
 
 static inline std::string deterministicFallbackIdInternal(
     const std::string& salt,
@@ -184,10 +196,12 @@ static inline std::string deterministicFallbackIdInternal(
     std::string seed;
     seed.reserve(256);
 
-    // v2 tag + simple mh param marker
-    seed.append(TAG_FALLBACK_V2);
+    // v3 tag + plan marker (binds this to the password-KDF-aware profile)
+    seed.append(TAG_FALLBACK_V3);
     seed.push_back('|');
-    seed.append("mh:m2|");
+    seed.append("plan:");
+    seed.append(PLAN_PWD_KDF);
+    seed.push_back('|');
 
     appendLenPrefixed(seed, "salt",   salt);
     appendLenPrefixed(seed, "ua",     userAgent);
@@ -220,7 +234,7 @@ static inline std::string deterministicFallbackIdInternal(
     return std::string("det_") + digest.substr(0, 48);
 }
 
-// ---------- 2auth generator (v2, memory-hard) ----------
+// ---------- 2auth generator (v3, memory-hard, KDF-aware) ----------
 
 static inline std::string generate2authInternal(const std::string& id,
                                                 int requestedLength) {
@@ -246,16 +260,17 @@ static inline std::string generate2authInternal(const std::string& id,
 
     while (out.size() < target) {
         std::string material;
-        material.reserve(id.size() + 64);
-        material.append(TAG_2AUTH_V2);
+        material.reserve(id.size() + 96);
+        material.append(TAG_2AUTH_V3);
+        material.push_back('|');
+        material.append("plan:");
+        material.append(PLAN_PWD_KDF);
         material.push_back('|');
         material.append(std::to_string(id.size()));
         material.push_back(':');
         material.append(id);
         material.push_back('|');
         material.append(std::to_string(counter));
-        material.push_back('|');
-        material.append("mh:m2");
 
         // Initial SHA-512 of material
         uint8_t seed64[64];
