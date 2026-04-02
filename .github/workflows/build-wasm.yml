@@ -36,12 +36,12 @@ jobs:
             -O3 \
             -fno-exceptions \
             -fno-rtti \
-            --no-entry \
             -s DISABLE_EXCEPTION_CATCHING=1 \
             -s STANDALONE_WASM=0 \
             -s EXPORTED_FUNCTIONS=_malloc,_free,_ag_generate_2auth,_ag_deterministic_id,_ag_is_valid_id \
             -s EXPORTED_RUNTIME_METHODS=ccall,cwrap \
             -o index.wasm
+
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
