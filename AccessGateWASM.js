@@ -461,6 +461,12 @@ class AccessGateWASM {
   }
 
   allocString(bytes) {
+    if (bytes.length === 0) {
+      // The C ABI checks pointers before lengths, so empty optional strings
+      // still need a valid non-null pointer.
+      return { ptr: this.alloc(1), len: 0 };
+    }
+
     const ptr = this.alloc(bytes.length);
     this.write(ptr, bytes);
     return { ptr, len: bytes.length };
