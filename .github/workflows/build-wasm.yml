@@ -9,6 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.check_step.outputs.status }}
+      commit_enabled: ${{ steps.check_step.outputs.commit_enabled }}
+      commit_branch: ${{ steps.check_step.outputs.commit_branch }}
+      current_branch: ${{ steps.check_step.outputs.current_branch }}
     steps:
       - uses: actions/checkout@v4
       - name: Run Node Validator
@@ -57,3 +60,10 @@ jobs:
         with:
           name: index-wasm
           path: index.wasm
+
+      - name: Report CI Gate
+        run: |
+          echo "status=${{ needs.validate.outputs.should_run }}"
+          echo "commit_enabled=${{ needs.validate.outputs.commit_enabled }}"
+          echo "commit_branch=${{ needs.validate.outputs.commit_branch }}"
+          echo "current_branch=${{ needs.validate.outputs.current_branch }}"

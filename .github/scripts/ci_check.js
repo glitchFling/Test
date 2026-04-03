@@ -1,53 +1,106 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
+
+function setOutput(name, value) {
+  if (process.env.GITHUB_OUTPUT) {
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+  }
+}
+
+function parseCommitConfig(config) {
+  if (!Array.isArray(config.commit) || config.commit.length < 2) {
+    throw new Error(
+      'ci.config.json "commit" must be an array like ["on", "main"].'
+    );
+  }
+
+  const [toggleRaw, branchRaw] = config.commit;
+  const toggle = String(toggleRaw).toLowerCase();
+  const branch = String(branchRaw || "").trim();
+
+  if (!["on", "off"].includes(toggle)) {
+    throw new Error('ci.config.json commit toggle must be "on" or "off".');
+  }
+
+  if (!branch) {
+    throw new Error("ci.config.json commit branch must be non-empty.");
+  }
+
+  return { toggle, branch };
+}
+
+function scanForViolations(dir) {
+  let foundViolation = false;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!["node_modules", ".git"].includes(entry.name)) {
+        foundViolation = scanForViolations(fullPath) || foundViolation;
+      }
+      continue;
+    }
+
+    if (!entry.name.endsWith(".sh")) continue;
+
+    const content = fs.readFileSync(fullPath, "utf8");
+    if (content.includes("EXIT_RUNTIME") || content.includes("--exit-runtime")) {
+      console.error(`VIOLATION: ${fullPath}`);
+      foundViolation = true;
+    }
+  }
+
+  return foundViolation;
+}
+
+function resolveRefName() {
+  return (
+    process.env.GITHUB_HEAD_REF ||
+    process.env.GITHUB_REF_NAME ||
+    ""
+  ).trim();
+}
 
 function run() {
-    // 1. Find Config
-    const configPath = path.join(process.cwd(), 'ci.config.json');
-    if (!fs.existsSync(configPath)) {
-        console.error("❌ Error: ci.config.json not found!");
-        process.exit(1);
-    }
+  const configPath = path.join(process.cwd(), "ci.config.json");
+  if (!fs.existsSync(configPath)) {
+    console.error("Error: ci.config.json not found.");
+    process.exit(1);
+  }
 
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const { toggle, branch } = parseCommitConfig(config);
+  const currentRef = resolveRefName();
 
-    // 2. Strict Check for the "ci" Toggle
-    if (config.ci !== true) {
-        console.log(`⏭️  CI is DISABLED (Value: ${config.ci}). Skipping next jobs.`);
-        process.exit(0); 
-    }
+  setOutput("status", "skipped");
+  setOutput("commit_enabled", toggle);
+  setOutput("commit_branch", branch);
+  setOutput("current_branch", currentRef);
 
-    console.log("🚀 CI ENABLED: Scanning repository for forbidden flags...");
+  if (config.ci !== true) {
+    console.log(`CI disabled. Value: ${config.ci}`);
+    return;
+  }
 
-    // 3. Scan Entire Repo for Forbidden Flags
-    let foundViolation = false;
-    function scan(dir) {
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                if (!['node_modules', '.git'].includes(entry.name)) scan(fullPath);
-            } else if (entry.name.endsWith('.sh')) {
-                const content = fs.readFileSync(fullPath, 'utf8');
-                if (content.includes("EXIT_RUNTIME") || content.includes("--exit-runtime")) {
-                    console.error(`❌ VIOLATION: ${fullPath}`);
-                    foundViolation = true;
-                }
-            }
-        }
-    }
-    
-    scan(process.cwd());
+  if (toggle !== "on") {
+    console.log(`Commit gate disabled. commit[0]=${toggle}`);
+    return;
+  }
 
-    if (foundViolation) {
-        process.exit(451);
-    }
+  if (currentRef !== branch) {
+    console.log(`Branch gate blocked. current=${currentRef} expected=${branch}`);
+    return;
+  }
 
-    // 4. THE SIGNAL (This triggers the next job)
-    if (process.env.GITHUB_OUTPUT) {
-        fs.appendFileSync(process.env.GITHUB_OUTPUT, `status=ready\n`);
-        console.log("✅ Signal sent: READY");
-    }
+  console.log(`CI enabled on branch ${currentRef}. Scanning repository...`);
+
+  if (scanForViolations(process.cwd())) {
+    process.exit(451);
+  }
+
+  setOutput("status", "ready");
+  console.log("Signal sent: READY");
 }
 
 run();

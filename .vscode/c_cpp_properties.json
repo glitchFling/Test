@@ -1,6 +1,17 @@
 {
   "configurations": [
     {
+      "name": "MSYS2 UCRT64",
+      "includePath": [
+        "${workspaceFolder}/**"
+      ],
+      "defines": [],
+      "compilerPath": "C:/msys64/ucrt64/bin/g++.exe",
+      "cStandard": "c11",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "windows-gcc-x64"
+    },
+    {
       "name": "Emscripten",
       "includePath": [
         "${workspaceFolder}/**",
@@ -14,10 +25,10 @@
       "defines": [
         "__EMSCRIPTEN__"
       ],
-      "compilerPath": "${env:EMSDK}/upstream/emscripten/em++.bat",
+      "compilerPath": "C:/msys64/ucrt64/bin/g++.exe",
       "cStandard": "c11",
       "cppStandard": "c++17",
-      "intelliSenseMode": "windows-clang-x64"
+      "intelliSenseMode": "windows-gcc-x64"
     }
   ],
   "version": 4

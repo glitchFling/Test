@@ -1,3 +1,4 @@
 {
-  "ci": true
+  "ci": true,
+  "commit": ["on", "main"]
 }

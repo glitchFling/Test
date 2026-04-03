@@ -5,11 +5,17 @@ on: [push, pull_request]
 jobs:
   validate:
     runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check_step.outputs.status }}
+      commit_enabled: ${{ steps.check_step.outputs.commit_enabled }}
+      commit_branch: ${{ steps.check_step.outputs.commit_branch }}
+      current_branch: ${{ steps.check_step.outputs.current_branch }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Run Node CI
+        id: check_step
         run: |
           # Find the actual path to the file
           TARGET=$(find . -name "ci_check.js" -print -quit)
@@ -22,3 +28,10 @@ jobs:
           echo "Found script at: $TARGET"
           # Run it via node (Chmod-free!)
           node "$TARGET"
+
+      - name: Report CI Gate
+        run: |
+          echo "status=${{ steps.check_step.outputs.status }}"
+          echo "commit_enabled=${{ steps.check_step.outputs.commit_enabled }}"
+          echo "commit_branch=${{ steps.check_step.outputs.commit_branch }}"
+          echo "current_branch=${{ steps.check_step.outputs.current_branch }}"
