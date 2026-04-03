@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AccessGate WASM Demo</title>
+</head>
+<body>
+  <h1>AccessGate WASM</h1>
+
+  <label>
+    Input:
+    <input id="input" type="text" />
+  </label>
+  <br />
+
+  <label>
+    Salt:
+    <input id="salt" type="text" />
+  </label>
+  <br />
+
+  <label>
+    Output length:
+    <input id="outLen" type="number" value="32" />
+  </label>
+  <br />
+
+  <button id="deriveBtn">Derive key</button>
+  <button id="fallbackBtn">Derive fallback ID</button>
+
+  <pre id="output"></pre>
+
+  <script type="module" src="AccessGateWASM.js"></script>
+</body>
+</html>

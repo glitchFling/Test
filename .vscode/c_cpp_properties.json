@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "name": "Emscripten",
+      "includePath": [
+        "${workspaceFolder}/**",
+        "${env:EMSDK}/upstream/emscripten/cache/sysroot/include",
+        "${env:EMSDK}/upstream/emscripten/system/include",
+        "${env:EMSDK}/upstream/emscripten/system/lib/libc/musl/arch/emscripten",
+        "${env:EMSDK}/upstream/emscripten/system/lib/libc/musl/include",
+        "${env:EMSDK}/upstream/emscripten/system/lib/libcxx/include",
+        "${env:EMSDK}/upstream/emscripten/system/lib/libcxxabi/include"
+      ],
+      "defines": [
+        "__EMSCRIPTEN__"
+      ],
+      "compilerPath": "${env:EMSDK}/upstream/emscripten/em++.bat",
+      "cStandard": "c11",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "windows-clang-x64"
+    }
+  ],
+  "version": 4
+}

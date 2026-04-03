@@ -1,0 +1,59 @@
+name: Build C++ → WASM
+
+on:
+  push:
+    branches: ["**"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check_step.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Node Validator
+        id: check_step
+        run: |
+          TARGET=$(find . -name "ci_check.js" -print -quit)
+          node "$TARGET"
+
+  build-wasm:
+    needs: validate
+    if: needs.validate.outputs.should_run == 'ready'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Compile index.cpp
+        run: |
+          emcc index.cpp \
+          -O3 \
+          -fno-exceptions \
+          -fno-rtti \
+          -s STANDALONE_WASM=1 \
+          -s WASM_BIGINT=0 \
+          -s FILESYSTEM=0 \
+          -s SUPPORT_ERRNO=0 \
+          -s SUPPORT_LONGJMP=0 \
+          -s ENVIRONMENT='web' \
+          -s EXPORTED_FUNCTIONS="['_malloc','_free','_ag_generate_2auth','_ag_deterministic_id','_ag_is_valid_id']" \
+          -Wl,--no-entry \
+          -o index.wasm
+
+
+
+
+
+
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: index-wasm
+          path: index.wasm
