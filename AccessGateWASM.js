@@ -375,12 +375,22 @@ class AccessGateWASM {
     this.memory = this.exports.memory;
     this.mem8 = new Uint8Array(this.memory.buffer);
 
-    this.malloc = this.exports._malloc;
-    this.free = this.exports._free;
+    this.malloc = this.resolveExport("malloc", "_malloc");
+    this.free = this.resolveExport("free", "_free");
 
-    this.generate2auth = this.exports._ag_generate_2auth;
-    this.deterministicId = this.exports._ag_deterministic_id;
-    this.isValidId = this.exports._ag_is_valid_id;
+    this.generate2auth = this.resolveExport("ag_generate_2auth", "_ag_generate_2auth");
+    this.deterministicId = this.resolveExport("ag_deterministic_id", "_ag_deterministic_id");
+    this.isValidId = this.resolveExport("ag_is_valid_id", "_ag_is_valid_id");
+  }
+
+  resolveExport(...names) {
+    for (const name of names) {
+      if (typeof this.exports[name] === "function") {
+        return this.exports[name];
+      }
+    }
+
+    throw new Error(`Missing WASM export. Tried: ${names.join(", ")}`);
   }
 
   static async init() {
