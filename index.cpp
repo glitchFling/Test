@@ -1,4 +1,4 @@
-// AccessGate.cpp — v3 (password-KDF aware, memory-hard, same C ABI)
+// AccessGate.cpp — v4 (password-KDF aware, stronger memory-hard core, same C ABI)
 //
 // Hardened C++/WASM core for AccessGate in Emscripten mode.
 // Exports (C ABI):
@@ -12,12 +12,12 @@
 //   _ag_generate_2auth
 //   _ag_deterministic_id
 //
-// v3 assumptions:
+// v4 assumptions:
 // - Weak passwords (if any) are already passed through a memory-hard KDF
 //   (e.g., Argon2id) OUTSIDE this module.
 // - This core treats its inputs as high-entropy secrets and adds its own
-//   memory-hard mixing + domain separation.
-// - C ABI is unchanged from v1/v2.
+//   stronger memory-hard mixing + domain separation.
+// - C ABI is unchanged from v1/v2/v3.
 
 #include <string>
 #include <stdint.h>
@@ -43,23 +43,25 @@ static constexpr int MAX_INPUT_LEN     = 4096;   // per string input from JS
 static constexpr int MAX_2AUTH_LEN     = 4096;   // hard cap for 2auth output
 static constexpr int DEFAULT_2AUTH_LEN = 2048;
 
-// v3 tags (v1/v2 tags kept only for reference)
+// v4 tags (v1/v2/v3 kept only for reference)
 // static constexpr const char* TAG_2AUTH_V1    = "AccessGate-2auth-v1";
 // static constexpr const char* TAG_FALLBACK_V1 = "AccessGate-fallback-id-v1";
 // static constexpr const char* TAG_2AUTH_V2    = "AccessGate-2auth-v2";
 // static constexpr const char* TAG_FALLBACK_V2 = "AccessGate-fallback-id-v2";
+// static constexpr const char* TAG_2AUTH_V3    = "AccessGate-2auth-v3";
+// static constexpr const char* TAG_FALLBACK_V3 = "AccessGate-fallback-id-v3";
 
-static constexpr const char* TAG_2AUTH_V3    = "AccessGate-2auth-v3";
-static constexpr const char* TAG_FALLBACK_V3 = "AccessGate-fallback-id-v3";
+static constexpr const char* TAG_2AUTH_V4    = "AccessGate-2auth-v4";
+static constexpr const char* TAG_FALLBACK_V4 = "AccessGate-fallback-id-v4";
 
-// v3: encode that upstream password KDF is in play (informational, domain sep)
+// v4: encode that upstream password KDF is in play (informational, domain sep)
 static constexpr const char* PLAN_PWD_KDF    = "AG-PWD-v1:mem64m-time2-par1";
 
-// Memory-hard parameters (tunable)
-static constexpr size_t MH_2AUTH_BLOCKS   = 4096; // 4096 * 64 = 256 KiB
+// Stronger memory-hard parameters (still WASM-friendly)
+static constexpr size_t MH_2AUTH_BLOCKS   = 8192; // 8192 * 64 = 512 KiB
 static constexpr size_t MH_2AUTH_BLKSIZE  = 64;
 
-static constexpr size_t MH_ID_BLOCKS      = 2048; // 2048 * 32 = 64 KiB
+static constexpr size_t MH_ID_BLOCKS      = 4096; // 4096 * 32 = 128 KiB
 static constexpr size_t MH_ID_BLKSIZE     = 32;
 
 // ---------- Internal helpers ----------
@@ -124,7 +126,28 @@ static inline void appendLenPrefixed(std::string& dst,
     dst.append(s);
 }
 
-// ---------- Memory-hard cores ----------
+// ---------- Small mixing helpers ----------
+
+static inline uint32_t rotl32(uint32_t x, int r) {
+    return (x << r) | (x >> (32 - r));
+}
+
+static inline uint8_t rotl8(uint8_t x, int r) {
+    return static_cast<uint8_t>((x << r) | (x >> (8 - r)));
+}
+
+// Derive a data-dependent reference index from a block
+static inline size_t derive_index(const uint8_t* block, size_t i, size_t max) {
+    // Use first 16 bytes to build a 32-bit state
+    uint32_t s = 0x9E3779B9u ^ static_cast<uint32_t>(i);
+    for (int k = 0; k < 16; ++k) {
+        s ^= static_cast<uint32_t>(block[k]) << ((k & 3) * 8);
+        s = rotl32(s, 7) * 0x85EBCA6Bu;
+    }
+    return static_cast<size_t>(s % max);
+}
+
+// ---------- Memory-hard cores (v4, stronger) ----------
 
 // 64-byte memory-hard expansion (for 2auth blocks)
 static inline void mh_expand_64(const uint8_t* seed64, uint8_t* out64) {
@@ -137,22 +160,24 @@ static inline void mh_expand_64(const uint8_t* seed64, uint8_t* out64) {
     for (size_t i = 1; i < MH_2AUTH_BLOCKS; ++i) {
         uint8_t* prev = &buf[(i - 1) * MH_2AUTH_BLKSIZE];
 
-        // Simple data-dependent index
-        size_t refIndex = (static_cast<size_t>(prev[0]) ^
-                           static_cast<size_t>(prev[17])) % i;
+        // Stronger data-dependent index
+        size_t refIndex = derive_index(prev, i, i);
         uint8_t* ref = &buf[refIndex * MH_2AUTH_BLKSIZE];
 
         uint8_t tmp[MH_2AUTH_BLKSIZE];
         for (size_t j = 0; j < MH_2AUTH_BLKSIZE; ++j) {
-            tmp[j] = static_cast<uint8_t>(prev[j] ^ ref[j]);
+            // Cross-mix prev, ref, and position
+            uint8_t x = static_cast<uint8_t>(prev[j] ^ ref[j]);
+            x = static_cast<uint8_t>(x + static_cast<uint8_t>(j * 131));
+            tmp[j] = rotl8(x, 3);
         }
 
         ag_sha512(tmp, MH_2AUTH_BLKSIZE, &buf[i * MH_2AUTH_BLKSIZE]);
     }
 
-    // Final hash of last block
-    ag_sha512(&buf[(MH_2AUTH_BLOCKS - 1) * MH_2AUTH_BLKSIZE],
-              MH_2AUTH_BLKSIZE,
+    // Final: hash the entire buffer, not just last block
+    ag_sha512(buf.data(),
+              static_cast<uint32_t>(buf.size()),
               out64);
 }
 
@@ -165,24 +190,25 @@ static inline void mh_expand_32(const uint8_t* seed32, uint8_t* out32) {
     for (size_t i = 1; i < MH_ID_BLOCKS; ++i) {
         uint8_t* prev = &buf[(i - 1) * MH_ID_BLKSIZE];
 
-        size_t refIndex = (static_cast<size_t>(prev[0]) ^
-                           static_cast<size_t>(prev[13])) % i;
+        size_t refIndex = derive_index(prev, i, i);
         uint8_t* ref = &buf[refIndex * MH_ID_BLKSIZE];
 
         uint8_t tmp[MH_ID_BLKSIZE];
         for (size_t j = 0; j < MH_ID_BLKSIZE; ++j) {
-            tmp[j] = static_cast<uint8_t>(prev[j] ^ ref[j]);
+            uint8_t x = static_cast<uint8_t>(prev[j] ^ ref[j]);
+            x = static_cast<uint8_t>(x + static_cast<uint8_t>(j * 197));
+            tmp[j] = rotl8(x, 5);
         }
 
         ag_sha256(tmp, MH_ID_BLKSIZE, &buf[i * MH_ID_BLKSIZE]);
     }
 
-    ag_sha256(&buf[(MH_ID_BLOCKS - 1) * MH_ID_BLKSIZE],
-              MH_ID_BLKSIZE,
+    ag_sha256(buf.data(),
+              static_cast<uint32_t>(buf.size()),
               out32);
 }
 
-// ---------- Deterministic fallback ID (v3, memory-hard, KDF-aware) ----------
+// ---------- Deterministic fallback ID (v4, memory-hard, KDF-aware) ----------
 
 static inline std::string deterministicFallbackIdInternal(
     const std::string& salt,
@@ -196,8 +222,8 @@ static inline std::string deterministicFallbackIdInternal(
     std::string seed;
     seed.reserve(256);
 
-    // v3 tag + plan marker (binds this to the password-KDF-aware profile)
-    seed.append(TAG_FALLBACK_V3);
+    // v4 tag + plan marker (binds this to the password-KDF-aware profile)
+    seed.append(TAG_FALLBACK_V4);
     seed.push_back('|');
     seed.append("plan:");
     seed.append(PLAN_PWD_KDF);
@@ -234,7 +260,7 @@ static inline std::string deterministicFallbackIdInternal(
     return std::string("det_") + digest.substr(0, 48);
 }
 
-// ---------- 2auth generator (v3, memory-hard, KDF-aware) ----------
+// ---------- 2auth generator (v4, memory-hard, KDF-aware) ----------
 
 static inline std::string generate2authInternal(const std::string& id,
                                                 int requestedLength) {
@@ -261,7 +287,7 @@ static inline std::string generate2authInternal(const std::string& id,
     while (out.size() < target) {
         std::string material;
         material.reserve(id.size() + 96);
-        material.append(TAG_2AUTH_V3);
+        material.append(TAG_2AUTH_V4);
         material.push_back('|');
         material.append("plan:");
         material.append(PLAN_PWD_KDF);
